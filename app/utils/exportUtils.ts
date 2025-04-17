@@ -5,7 +5,6 @@ import { Packer } from 'docx';
 // import * as pdfFonts from 'pdfmake/build/vfs_fonts';
 import JSZip from 'jszip';
 
-// // 正确初始化 pdfMake
 // (pdfMake as any).vfs = pdfFonts.pdfMake.vfs;
 
 // export const exportAsPDF = (content: string, title: string) => {

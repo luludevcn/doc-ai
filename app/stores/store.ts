@@ -9,7 +9,6 @@ export const store = configureStore({
   },
 });
 
-// 添加 AppThunk 类型定义
 export type AppThunk<ReturnType = void> = (
   dispatch: AppDispatch,
   getState: () => RootState
