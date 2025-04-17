@@ -5,7 +5,10 @@ const nextConfig = {
     domains: [],
   },
   api: {
-    responseTimeout: 30_000,
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+    responseTimeout: 30000,
   },
 };
 

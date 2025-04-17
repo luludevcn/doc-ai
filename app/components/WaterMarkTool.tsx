@@ -4,23 +4,29 @@ import { useDropzone } from 'react-dropzone';
 import { useDebounce } from 'use-debounce';
 
 export default function WatermarkTool() {
+  // 状态管理
   const [file, setFile] = useState<File | null>(null);
-  const [text, setText] = useState('Confidential');
-  const [opacity, setOpacity] = useState(0.5);
-  const [angle, setAngle] = useState(-45);
-  const [size, setSize] = useState(32);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isHighQuality, setIsHighQuality] = useState(false);
-  const [debouncedOptions] = useDebounce({ text, opacity, angle, size }, 300);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const downloadRef = useRef<HTMLAnchorElement>(null);
+  
+  // 水印参数
+  const [type, setType] = useState<'text' | 'image'>('text');
+  const [text, setText] = useState('Confidential');
+  const [opacity, setOpacity] = useState(0.3);
+  const [spacing, setSpacing] = useState(150);
+  const [watermarkImage, setWatermarkImage] = useState<File | null>(null);
+  
+  // 防抖处理
+  const [debouncedOptions] = useDebounce({ 
+    type, text, opacity, spacing 
+  }, 500);
 
   // 文件上传处理
-  const { getRootProps, getInputProps } = useDropzone({
-    accept: {
-      'image/*': ['.png', '.jpg', '.jpeg'],
-      'application/pdf': ['.pdf'],
+  const { getRootProps: getFileInputProps, getInputProps: getFileInput } = useDropzone({
+    accept: { 
+      'image/*': ['.png', '.jpg', '.jpeg'], 
+      'application/pdf': ['.pdf'] 
     },
     maxFiles: 1,
     onDrop: acceptedFiles => {
@@ -29,104 +35,53 @@ export default function WatermarkTool() {
     },
   });
 
-  // 生成缩略图预览
-  const generateThumbnailPreview = useCallback(async () => {
-    if (!file || !canvasRef.current) return;
+  const { getRootProps: getWatermarkInputProps, getInputProps: getWatermarkInput } = useDropzone({
+    accept: { 'image/*': ['.png', '.jpg', '.jpeg'] },
+    maxFiles: 1,
+    onDrop: acceptedFiles => {
+      setWatermarkImage(acceptedFiles[0]);
+      setIsHighQuality(false);
+    },
+  });
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d')!;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // 图片文件预览
-    if (file.type.startsWith('image/')) {
-      const img = new Image();
-      img.src = URL.createObjectURL(file);
-      await new Promise(resolve => (img.onload = resolve));
-
-      // 调整画布尺寸
-      const ratio = Math.min(400 / img.width, 300 / img.height);
-      canvas.width = img.width * ratio;
-      canvas.height = img.height * ratio;
-
-      // 绘制图像
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      
-      // 添加水印文本
-      ctx.fillStyle = `rgba(128, 128, 128, ${opacity})`;
-      ctx.font = `${size}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.save();
-      ctx.translate(canvas.width/2, canvas.height/2);
-      ctx.rotate((angle * Math.PI) / 180);
-      ctx.fillText(text, 0, 0);
-      ctx.restore();
-
-      setPreviewUrl(canvas.toDataURL());
-    }
-    // PDF文件预览（显示第一页缩略图）
-    else if (file.type === 'application/pdf') {
-      canvas.width = 300;
-      canvas.height = 400;
-      ctx.fillStyle = '#f0f0f0';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = `rgba(128, 128, 128, ${opacity})`;
-      ctx.font = `${size}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.save();
-      ctx.translate(canvas.width/2, canvas.height/2);
-      ctx.rotate((angle * Math.PI) / 180);
-      ctx.fillText(text, 0, 0);
-      ctx.restore();
-      ctx.strokeStyle = '#ccc';
-      ctx.strokeRect(10, 10, canvas.width-20, canvas.height-20);
-      ctx.fillStyle = '#666';
-      ctx.fillText('PDF Preview', canvas.width/2, 30);
-
-      setPreviewUrl(canvas.toDataURL());
-    }
-  }, [file, text, opacity, angle, size]);
-
-  // 生成高质量预览
-  const generateHighQualityPreview = async () => {
+  // 生成预览
+  const generatePreview = useCallback(async () => {
     if (!file) return;
     
     setIsProcessing(true);
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('text', text);
+      formData.append('type', type);
       formData.append('opacity', opacity.toString());
-      formData.append('angle', angle.toString());
-      formData.append('size', size.toString());
+      formData.append('spacing', spacing.toString());
       formData.append('preview', 'true');
+      
+      if (type === 'text') {
+        formData.append('text', text);
+      } else if (watermarkImage) {
+        formData.append('watermarkImage', watermarkImage);
+      } else {
+        // 使用默认水印图片
+        const defaultImg = await fetch('/mark.png').then(r => r.blob());
+        formData.append('watermarkImage', new File([defaultImg], 'default.png'));
+      }
 
-      const endpoint = file.type === 'application/pdf' 
-        ? '/api/pdf' 
-        : '/api/image';
-
-      const response = await fetch(endpoint, {
+      const response = await fetch('/api/watermark', {
         method: 'POST',
         body: formData,
       });
 
-      if (!response.ok) throw new Error('Preview generation failed');
-
+      if (!response.ok) throw new Error('Preview failed');
+      
       const blob = await response.blob();
       setPreviewUrl(URL.createObjectURL(blob));
-      setIsHighQuality(true);
     } catch (error) {
-      console.error('Error:', error);
+      console.error('Preview error:', error);
     } finally {
       setIsProcessing(false);
     }
-  };
-
-  // 参数变化时更新预览
-  useEffect(() => {
-    if (file && !isHighQuality) {
-      generateThumbnailPreview();
-    }
-  }, [file, debouncedOptions, generateThumbnailPreview, isHighQuality]);
+  }, [file, type, text, opacity, spacing, watermarkImage]);
 
   // 下载处理
   const handleDownload = async () => {
@@ -136,192 +91,209 @@ export default function WatermarkTool() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('text', text);
+      formData.append('type', type);
       formData.append('opacity', opacity.toString());
-      formData.append('angle', angle.toString());
-      formData.append('size', size.toString());
+      formData.append('spacing', spacing.toString());
+      
+      if (type === 'text') {
+        formData.append('text', text);
+      } else if (watermarkImage) {
+        formData.append('watermarkImage', watermarkImage);
+      }
 
-      const endpoint = file.type === 'application/pdf' 
-        ? '/api/pdf' 
-        : '/api/image';
-
-      const response = await fetch(endpoint, {
+      const response = await fetch('/api/watermark', {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) throw new Error('Processing failed');
-
+      
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-      
-      if (downloadRef.current) {
-        downloadRef.current.href = url;
-        downloadRef.current.download = `watermarked_${file.name}`;
-        downloadRef.current.click();
-      }
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `watermarked_${file.name}`;
+      a.click();
     } catch (error) {
       console.error('Error:', error);
+      alert('处理失败: ' + error.message);
     } finally {
       setIsProcessing(false);
     }
   };
 
+  // 参数变化时更新预览
+  useEffect(() => {
+    if (file) generatePreview();
+  }, [file, debouncedOptions, generatePreview]);
+
+  // 清理对象URL
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   return (
-    <div className="space-y-6 p-4 max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto p-4 space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* 参数控制区 */}
+        {/* 控制面板 */}
         <div className="space-y-4">
-          <div {...getRootProps()} className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50 transition-colors">
-            <input {...getInputProps()} />
-            <p className="text-gray-500">
-              {file ? file.name : '拖放文件到此处或点击选择'}
-            </p>
+          <div className="space-y-4 p-4 border rounded-lg">
+            <h3 className="font-bold text-lg">文件选择</h3>
+            <div {...getFileInputProps()} className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50">
+              <input {...getFileInput()} />
+              <p className="text-gray-500">
+                {file ? file.name : '拖放PDF或图片文件'}
+              </p>
+            </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4 p-4 border rounded-lg">
+            <h3 className="font-bold text-lg">水印设置</h3>
+            
             <div>
-              <label className="block mb-1 font-medium">水印文字</label>
-              <input
-                type="text"
-                value={text}
-                onChange={(e) => {
-                  setText(e.target.value);
-                  setIsHighQuality(false);
-                }}
-                className="w-full p-2 border rounded"
-              />
+              <label className="block mb-2">水印类型</label>
+              <div className="flex space-x-4">
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    checked={type === 'text'}
+                    onChange={() => setType('text')}
+                    className="mr-2"
+                  />
+                  文字水印
+                </label>
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    checked={type === 'image'}
+                    onChange={() => setType('image')}
+                    className="mr-2"
+                  />
+                  图片水印
+                </label>
+              </div>
             </div>
 
+            {type === 'text' ? (
+              <div>
+                <label className="block mb-2">水印文字</label>
+                <input
+                  type="text"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  className="w-full p-2 border rounded"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="block mb-2">水印图片</label>
+                <div {...getWatermarkInputProps()} className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50">
+                  <input {...getWatermarkInput()} />
+                  <p className="text-gray-500">
+                    {watermarkImage ? watermarkImage.name : '点击选择水印图片'}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div>
-              <label className="block mb-1 font-medium">
+              <label className="block mb-2">
                 透明度: {Math.round(opacity * 100)}%
               </label>
               <input
                 type="range"
-                min="0"
+                min="0.1"
                 max="1"
-                step="0.05"
+                step="0.1"
                 value={opacity}
-                onChange={(e) => {
-                  setOpacity(parseFloat(e.target.value));
-                  setIsHighQuality(false);
-                }}
+                onChange={(e) => setOpacity(parseFloat(e.target.value))}
                 className="w-full"
               />
             </div>
 
             <div>
-              <label className="block mb-1 font-medium">
-                旋转角度: {angle}°
+              <label className="block mb-2">
+                水印间距: {spacing}px
               </label>
               <input
                 type="range"
-                min="-180"
-                max="180"
-                value={angle}
-                onChange={(e) => {
-                  setAngle(parseInt(e.target.value));
-                  setIsHighQuality(false);
-                }}
+                min="50"
+                max="300"
+                step="10"
+                value={spacing}
+                onChange={(e) => setSpacing(parseInt(e.target.value))}
                 className="w-full"
               />
             </div>
+          </div>
 
-            <div>
-              <label className="block mb-1 font-medium">
-                字体大小: {size}px
-              </label>
-              <input
-                type="range"
-                min="10"
-                max="72"
-                value={size}
-                onChange={(e) => {
-                  setSize(parseInt(e.target.value));
-                  setIsHighQuality(false);
-                }}
-                className="w-full"
-              />
-            </div>
-
-            <div className="flex space-x-3 pt-2">
-              <button
-                onClick={generateHighQualityPreview}
-                disabled={!file || isProcessing}
-                className={`flex-1 py-2 px-4 rounded ${
-                  !file || isProcessing
-                    ? 'bg-gray-300 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }`}
-              >
-                {isHighQuality ? '高质量预览已加载' : '加载高质量预览'}
-              </button>
-              
-              <button
-                onClick={handleDownload}
-                disabled={!file || isProcessing}
-                className={`flex-1 py-2 px-4 rounded text-white ${
-                  !file || isProcessing
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-green-600 hover:bg-green-700'
-                }`}
-              >
-                {isProcessing ? '处理中...' : '下载文件'}
-              </button>
-            </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={() => generatePreview()}
+              disabled={!file || isProcessing}
+              className={`flex-1 py-2 px-4 rounded ${
+                !file || isProcessing
+                  ? 'bg-gray-300 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+            >
+              刷新预览
+            </button>
+            <button
+              onClick={handleDownload}
+              disabled={!file || isProcessing}
+              className={`flex-1 py-2 px-4 rounded text-white ${
+                !file || isProcessing
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-700'
+              }`}
+            >
+              下载文件
+            </button>
           </div>
         </div>
 
-        {/* 预览区 */}
-        <div className="border rounded-lg p-4">
+        {/* 预览区域 */}
+        <div className="border rounded-lg p-4 h-full">
           <div className="flex justify-between items-center mb-3">
-            <h3 className="font-bold">实时预览</h3>
+            <h3 className="font-bold text-lg">效果预览</h3>
             <span className="text-sm text-gray-500">
-              {isHighQuality ? '高质量模式' : '快速预览模式'}
+              {isProcessing ? '生成中...' : '实时预览'}
             </span>
           </div>
           
-          <div className="flex justify-center items-center bg-gray-50 rounded-md min-h-[300px]">
+          <div className="flex justify-center items-center bg-gray-50 rounded-md min-h-[400px]">
             {previewUrl ? (
               file?.type === 'application/pdf' ? (
-                <div className="relative">
-                  <img 
+                <div className="relative w-full h-full">
+                  <iframe 
                     src={previewUrl} 
-                    alt="PDF预览" 
-                    className="max-h-[400px] border"
+                    className="w-full h-[400px] border"
+                    title="PDF预览"
                   />
-                  {!isHighQuality && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20 text-white">
-                      <span>PDF预览 - 点击"高质量预览"查看细节</span>
-                    </div>
-                  )}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-10 pointer-events-none">
+                    <span className="bg-white px-2 py-1 rounded text-sm">
+                      PDF预览 - 下载查看完整效果
+                    </span>
+                  </div>
                 </div>
               ) : (
                 <img
                   src={previewUrl}
-                  alt="图片预览"
-                  className="max-h-[400px] max-w-full object-contain"
+                  alt="预览"
+                  className="max-h-[500px] max-w-full object-contain"
                 />
               )
             ) : (
               <div className="text-gray-400 p-8 text-center">
-                {file ? '生成预览中...' : '上传文件后显示预览'}
+                {file ? '准备生成预览...' : '请先上传文件'}
               </div>
             )}
           </div>
-          
-          <canvas ref={canvasRef} className="hidden" />
-          
-          <p className="text-xs text-gray-500 mt-3">
-            {isHighQuality 
-              ? '当前显示服务器生成的高质量预览' 
-              : '实时预览为客户端生成，可能与最终结果略有差异'}
-          </p>
         </div>
       </div>
-
-      <a ref={downloadRef} className="hidden" />
     </div>
   );
 }
