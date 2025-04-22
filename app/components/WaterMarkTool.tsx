@@ -112,7 +112,7 @@ export default function WatermarkTool() {
 
       // 释放内存
       setTimeout(() => URL.revokeObjectURL(url), 100);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error);
       alert('处理失败: ' + error.message);
     } finally {
